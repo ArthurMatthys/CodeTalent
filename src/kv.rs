@@ -2,7 +2,7 @@ use serde_json::Deserializer;
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
-    io::{BufWriter, Read, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
@@ -31,19 +31,20 @@ impl KvStore {
             .create(true)
             .write(true)
             .append(true)
-            .open(path.clone())?;
+            .open(log_path.clone())?;
 
         let mut content = HashMap::default();
-        let mut reader = ReaderWithPos::new(File::open(log_path).unwrap()).unwrap();
-        let size = read_log(&mut content, &mut reader)?;
-        let writer = WriterWithPos::new(tmp)?;
+        let mut reader = ReaderWithPos::new(File::open(log_path).expect("Could not open file"))?;
+        let (size, unused_space) = read_log(&mut content, &mut reader)?;
+        let mut writer = WriterWithPos::new(tmp)?;
+        writer.seek(SeekFrom::Start(size))?;
 
         Ok(Self {
             path,
             hmap: content,
             reader,
             writer,
-            unused_space: size,
+            unused_space,
         })
     }
 
@@ -118,12 +119,30 @@ impl KvStore {
             .write(true)
             .append(true)
             .open(tmp_file)?;
-        let new_writer = BufWriter::new(tmp_file);
+        let mut new_writer = WriterWithPos::new(tmp_file)?;
+        let reader = &mut self.reader;
+
+        let mut offset = 0;
+        for value in self.hmap.values_mut() {
+            if reader.pos != value.offset {
+                reader.seek(SeekFrom::Start(value.offset))?;
+            }
+            let mut reader_cmd = reader.take(value.size);
+            io::copy(&mut reader_cmd, &mut new_writer)?;
+
+            *value = CommandPos {
+                offset,
+                size: value.size,
+            };
+            offset += value.size;
+        }
+        new_writer.flush()?;
 
         fs::rename(
             get_log_file(&self.path, true),
             get_log_file(&self.path, false),
         )?;
+        self.writer = new_writer;
         self.unused_space = 0;
         Ok(())
     }
@@ -139,7 +158,7 @@ impl KvStore {
 fn read_log(
     content: &mut HashMap<String, CommandPos>,
     reader: &mut ReaderWithPos<File>,
-) -> Result<u64> {
+) -> Result<(u64, u64)> {
     let mut pos = reader.seek(SeekFrom::Start(0))?;
     let mut stream = Deserializer::from_reader(reader).into_iter::<Command>();
     let mut unused_space = 0;
@@ -166,14 +185,9 @@ fn read_log(
         }
         pos = offset;
     }
-    Ok(pos)
+    Ok((pos, unused_space))
 }
 
 fn get_log_file(path: &Path, backup: bool) -> PathBuf {
-    let new_path = path.join("kvs.log");
-    if backup {
-        new_path.join(".tmp")
-    } else {
-        new_path
-    }
+    path.join(if backup { "kvs.log.tmp" } else { "kvs.log" })
 }

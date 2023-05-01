@@ -15,7 +15,7 @@ impl Command {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CommandPos {
     pub(crate) offset: u64,
     pub(crate) size: u64,

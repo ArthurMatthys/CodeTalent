@@ -19,6 +19,7 @@ fn main() -> Result<()> {
                 .about("Remove a given key")
                 .arg(arg!(<KEY>).required(true)),
         ])
+        .arg(arg!(--addr <ADDR> "IP-Port").required(false))
         .get_matches();
 
     let mut kvs = KvStore::open(current_dir()?)?;
@@ -28,6 +29,8 @@ fn main() -> Result<()> {
     // eprintln!("{v:?}");
     // let v = kvs.get("key1".to_string());
     // eprintln!("{v:?}");
+    //
+    eprintln!("command : {:?}", m.get_one::<String>("ADDR"));
 
     match m.subcommand() {
         Some(("get", args)) => {

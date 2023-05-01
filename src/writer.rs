@@ -13,6 +13,7 @@ impl<W: Write + Seek> WriterWithPos<W> {
         W: Write + Seek,
     {
         let pos = buf.stream_position()?;
+        eprintln!("Writer pos : {}", pos);
         let writer = BufWriter::new(buf);
 
         Ok(Self { writer, pos })
@@ -30,5 +31,12 @@ impl<W: Write + Seek> Write for WriterWithPos<W> {
 
     fn flush(&mut self) -> std::io::Result<()> {
         self.writer.flush()
+    }
+}
+
+impl<W: Write + Seek> Seek for WriterWithPos<W> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.pos = self.writer.seek(pos)?;
+        Ok(self.pos)
     }
 }
