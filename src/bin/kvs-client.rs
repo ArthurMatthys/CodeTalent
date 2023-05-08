@@ -1,12 +1,21 @@
 use clap::{arg, builder::Command};
-use kvs::{KvStore, Result};
-use std::{env::current_dir, process::exit};
+use kvs::{address_parser, Result};
+use std::{
+    io::{BufWriter, Write},
+    net::TcpStream,
+};
 
 fn main() -> Result<()> {
+    // let log = Logger::root(Fuse(EprintlnDrain), o!("version" => "yop"));
     let m = Command::new("kvs")
         .author(env!("CARGO_PKG_AUTHORS"))
         .version(env!("CARGO_PKG_VERSION"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
+        .arg(
+            arg!(--addr <ADDR> "IP:Port")
+                .required(false)
+                .default_value("127.0.0.1:4000"),
+        )
         .subcommand_required(true)
         .subcommands([
             Command::new("get")
@@ -19,39 +28,36 @@ fn main() -> Result<()> {
                 .about("Remove a given key")
                 .arg(arg!(<KEY>).required(true)),
         ])
-        .arg(arg!(--addr <ADDR> "IP-Port").required(false))
         .get_matches();
 
-    let mut kvs = KvStore::open(current_dir()?)?;
+    // let mut kvs = KvStore::open(current_dir()?)?;
 
-    // kvs.set("key1".to_string(), "value1".to_string())?;
-    // let v = kvs.remove("key1".to_string());
-    // eprintln!("{v:?}");
-    // let v = kvs.get("key1".to_string());
-    // eprintln!("{v:?}");
-    //
-    eprintln!("command : {:?}", m.get_one::<String>("ADDR"));
+    let (addr, port) = address_parser(m.get_one::<String>("addr").expect("Default value present"))?;
 
+    let stream = TcpStream::connect(format!("{}:{}", addr, port))?;
+    let mut writer = BufWriter::new(stream);
     match m.subcommand() {
         Some(("get", args)) => {
             let key = args.get_one::<String>("KEY").unwrap();
-            if let Some(v) = kvs.get(key.to_string())? {
-                println!("{}", v)
-            } else {
-                println!("Key not found");
-            }
+            let cmd = kvs::Command::Get { key: key.clone() };
+            serde_json::to_writer(&mut writer, &cmd)?;
+            writer.flush()?;
         }
         Some(("set", args)) => {
             let key = args.get_one::<String>("KEY").unwrap();
             let value = args.get_one::<String>("VALUE").unwrap();
-            kvs.set(key.to_string(), value.to_string())?;
+            let cmd = kvs::Command::Set {
+                key: key.clone(),
+                value: value.clone(),
+            };
+            serde_json::to_writer(&mut writer, &cmd)?;
+            writer.flush()?;
         }
         Some(("rm", args)) => {
             let key = args.get_one::<String>("KEY").unwrap();
-            if kvs.remove(key.to_string()).is_err() {
-                println!("Key not found");
-                exit(1)
-            }
+            let cmd = kvs::Command::Rm { key: key.clone() };
+            serde_json::to_writer(&mut writer, &cmd)?;
+            writer.flush()?;
         }
         _ => unreachable!(),
     };

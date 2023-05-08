@@ -7,7 +7,8 @@ use std::{
 };
 
 use crate::{
-    error::MyError, reader::ReaderWithPos, writer::WriterWithPos, Command, CommandPos, Result,
+    error::MyError, reader::ReaderWithPos, writer::WriterWithPos, Command, CommandPos, KvsEngine,
+    Result,
 };
 
 const MAX_SPACE: u64 = 1024 * 1024;
@@ -19,6 +20,72 @@ pub struct KvStore {
     writer: WriterWithPos<File>,
     reader: ReaderWithPos<File>,
 }
+
+impl KvsEngine for KvStore {
+    fn set(&mut self, key: String, value: String) -> Result<()> {
+        let cmd = Command::set(key, value);
+        let pos = self.writer.pos;
+        // let written_bytes = self.writer.write(serde_json::to_string(&cmd)?.as_bytes())?;
+        serde_json::to_writer(&mut self.writer, &cmd)?;
+        self.writer.flush()?;
+        match cmd {
+            Command::Set { key, .. } => {
+                if let Some(cmd) = self.hmap.insert(
+                    key,
+                    CommandPos {
+                        offset: pos,
+                        size: self.writer.pos - pos,
+                    },
+                ) {
+                    self.unused_space += cmd.size;
+                    if self.unused_space > MAX_SPACE {
+                        self.compact()?;
+                    }
+                };
+            }
+            _ => unreachable!(),
+        };
+        Ok(())
+    }
+
+    fn get(&mut self, key: String) -> Result<Option<String>> {
+        match self.hmap.get(&key) {
+            Some(v) => {
+                let reader = &mut self.reader;
+                reader.seek(SeekFrom::Start(v.offset))?;
+                let cmd_reader = reader.take(v.size);
+                if let Command::Set { value, .. } = serde_json::from_reader(cmd_reader)? {
+                    Ok(Some(value))
+                } else {
+                    Err(MyError::UnexpectedCommand)?
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn remove(&mut self, key: String) -> Result<()> {
+        if self.hmap.contains_key(&key) {
+            let cmd = Command::rm(key);
+            serde_json::to_writer(&mut self.writer, &cmd)?;
+            match cmd {
+                Command::Rm { key } => {
+                    if let Some(cmd) = self.hmap.remove(&key) {
+                        self.unused_space += cmd.size;
+                    };
+                    if self.unused_space > MAX_SPACE {
+                        self.compact()?;
+                    }
+                    Ok(())
+                }
+                _ => unreachable!(),
+            }
+        } else {
+            Err(MyError::KeyNotFound)?
+        }
+    }
+}
+
 impl KvStore {
     fn new<T>(pathbuf: T) -> Result<Self>
     where
@@ -46,69 +113,6 @@ impl KvStore {
             writer,
             unused_space,
         })
-    }
-
-    pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        let cmd = Command::set(key, value);
-        let pos = self.writer.pos;
-        // let written_bytes = self.writer.write(serde_json::to_string(&cmd)?.as_bytes())?;
-        serde_json::to_writer(&mut self.writer, &cmd)?;
-        self.writer.flush()?;
-        match cmd {
-            Command::Set { key, .. } => {
-                if let Some(cmd) = self.hmap.insert(
-                    key,
-                    CommandPos {
-                        offset: pos,
-                        size: self.writer.pos - pos,
-                    },
-                ) {
-                    self.unused_space += cmd.size;
-                    if self.unused_space > MAX_SPACE {
-                        self.compact()?;
-                    }
-                };
-            }
-            _ => unreachable!(),
-        };
-        Ok(())
-    }
-
-    pub fn get(&mut self, key: String) -> Result<Option<String>> {
-        match self.hmap.get(&key) {
-            Some(v) => {
-                let reader = &mut self.reader;
-                reader.seek(SeekFrom::Start(v.offset))?;
-                let cmd_reader = reader.take(v.size);
-                if let Command::Set { value, .. } = serde_json::from_reader(cmd_reader)? {
-                    Ok(Some(value))
-                } else {
-                    Err(MyError::UnexpectedCommand)?
-                }
-            }
-            None => Ok(None),
-        }
-    }
-
-    pub fn remove(&mut self, key: String) -> Result<()> {
-        if self.hmap.contains_key(&key) {
-            let cmd = Command::rm(key);
-            serde_json::to_writer(&mut self.writer, &cmd)?;
-            match cmd {
-                Command::Rm { key } => {
-                    if let Some(cmd) = self.hmap.remove(&key) {
-                        self.unused_space += cmd.size;
-                    };
-                    if self.unused_space > MAX_SPACE {
-                        self.compact()?;
-                    }
-                    Ok(())
-                }
-                _ => unreachable!(),
-            }
-        } else {
-            Err(MyError::KeyNotFound)?
-        }
     }
 
     fn compact(&mut self) -> Result<()> {
@@ -182,6 +186,7 @@ fn read_log(
                 }
                 unused_space += offset - pos;
             }
+            _ => unreachable!(),
         }
         pos = offset;
     }

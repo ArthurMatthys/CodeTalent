@@ -13,7 +13,6 @@ impl<W: Write + Seek> WriterWithPos<W> {
         W: Write + Seek,
     {
         let pos = buf.stream_position()?;
-        eprintln!("Writer pos : {}", pos);
         let writer = BufWriter::new(buf);
 
         Ok(Self { writer, pos })

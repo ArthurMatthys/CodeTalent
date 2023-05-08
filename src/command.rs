@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub enum Command {
+    Get { key: String },
     Set { key: String, value: String },
     Rm { key: String },
 }
