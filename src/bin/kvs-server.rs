@@ -46,15 +46,16 @@ fn handle_client(kvs: &mut kvs::KvStore, logger: &Logger, stream: &mut TcpStream
     info!(logger, "We've got a connection from : {:?}", stream);
 
     let addr = stream.peer_addr()?;
-    let mut buffer = vec![];
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut writer = BufWriter::new(stream);
     // serde_json::to_writer(writer, &buffer)?;
-    reader.read_to_end(&mut buffer)?;
+    let mut buffer = vec![];
+    reader.read_until(b'\n', &mut buffer)?;
     info!(logger, "{:?}", buffer);
 
     // stream.write(&buffer[..a])?;
 
+    // let cmd = serde_json::from_reader::<_, kvs::Command>(&mut reader)?;
     let cmd = serde_json::from_slice::<kvs::Command>(&buffer)?;
 
     match cmd {
@@ -80,6 +81,7 @@ fn handle_client(kvs: &mut kvs::KvStore, logger: &Logger, stream: &mut TcpStream
             }
         }
     }
+    writer.write_all(b"\n")?; // Rajoute cette ligne
     writer.flush()?;
 
     Ok(())
@@ -117,6 +119,7 @@ fn main() -> Result<()> {
 
     for stream in listener.incoming() {
         handle_client(&mut kvs, &logger, &mut stream?)?;
+        debug!(logger, "Client handled {}", addr);
     }
 
     Ok(())

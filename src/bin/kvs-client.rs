@@ -25,12 +25,14 @@ fn main() -> Result<()> {
     let mut reader = BufReader::new(stream);
 
     serde_json::to_writer(&mut writer, &cli.command)?;
+    writer.write_all(b"\n")?; // Rajoute cette ligne
     writer.flush()?;
 
-    let mut buffer = vec![];
-    reader.read_until(b'\n', &mut buffer)?;
-    // let v = serde_json::from_reader::<_, String>(&mut reader)?;
-    println!("buf : {:?}", buffer);
+    // let mut buffer = vec![];
+    // reader.read_until(b'\n', &mut buffer)?;
+    // println!("buf : {:?}", buffer);
+    let v = serde_json::from_reader::<_, String>(&mut reader)?;
+    println!("v : {:?}", v);
 
     // match cli.command {
     //     Command::Get { key } => {
