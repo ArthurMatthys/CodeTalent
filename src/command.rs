@@ -1,9 +1,13 @@
+use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Subcommand)]
 pub enum Command {
+    /// Get the string value of a given string key
     Get { key: String },
+    /// Set the value of a string key to a string
     Set { key: String, value: String },
+    /// Remove a given key
     Rm { key: String },
 }
 

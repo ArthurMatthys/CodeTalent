@@ -1,65 +1,51 @@
-use clap::{arg, builder::Command};
-use kvs::{address_parser, Result};
+use clap::{arg, command, Parser};
+use kvs::{address_parser, Command, Result};
 use std::{
-    io::{BufWriter, Write},
+    io::{BufRead, BufReader, BufWriter, Write},
     net::TcpStream,
 };
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[arg(short, long, value_name = "addr", default_value = "127.0.0.1:4000")]
+    addr: String,
+
+    #[command(subcommand)]
+    command: Command,
+}
+
 fn main() -> Result<()> {
-    // let log = Logger::root(Fuse(EprintlnDrain), o!("version" => "yop"));
-    let m = Command::new("kvs")
-        .author(env!("CARGO_PKG_AUTHORS"))
-        .version(env!("CARGO_PKG_VERSION"))
-        .about(env!("CARGO_PKG_DESCRIPTION"))
-        .arg(
-            arg!(--addr <ADDR> "IP:Port")
-                .required(false)
-                .default_value("127.0.0.1:4000"),
-        )
-        .subcommand_required(true)
-        .subcommands([
-            Command::new("get")
-                .about("Get the string value of a given string key")
-                .arg(arg!(<KEY>).required(true)),
-            Command::new("set")
-                .about("Set the value of a string key to a string")
-                .args([arg!(<KEY>).required(true), arg!(<VALUE>).required(true)]),
-            Command::new("rm")
-                .about("Remove a given key")
-                .arg(arg!(<KEY>).required(true)),
-        ])
-        .get_matches();
+    let cli = Cli::parse();
 
-    // let mut kvs = KvStore::open(current_dir()?)?;
-
-    let (addr, port) = address_parser(m.get_one::<String>("addr").expect("Default value present"))?;
+    let (addr, port) = address_parser(&cli.addr)?;
 
     let stream = TcpStream::connect(format!("{}:{}", addr, port))?;
-    let mut writer = BufWriter::new(stream);
-    match m.subcommand() {
-        Some(("get", args)) => {
-            let key = args.get_one::<String>("KEY").unwrap();
-            let cmd = kvs::Command::Get { key: key.clone() };
-            serde_json::to_writer(&mut writer, &cmd)?;
-            writer.flush()?;
-        }
-        Some(("set", args)) => {
-            let key = args.get_one::<String>("KEY").unwrap();
-            let value = args.get_one::<String>("VALUE").unwrap();
-            let cmd = kvs::Command::Set {
-                key: key.clone(),
-                value: value.clone(),
-            };
-            serde_json::to_writer(&mut writer, &cmd)?;
-            writer.flush()?;
-        }
-        Some(("rm", args)) => {
-            let key = args.get_one::<String>("KEY").unwrap();
-            let cmd = kvs::Command::Rm { key: key.clone() };
-            serde_json::to_writer(&mut writer, &cmd)?;
-            writer.flush()?;
-        }
-        _ => unreachable!(),
-    };
+    let mut writer = BufWriter::new(stream.try_clone()?);
+    let mut reader = BufReader::new(stream);
+
+    serde_json::to_writer(&mut writer, &cli.command)?;
+    writer.flush()?;
+
+    let mut buffer = vec![];
+    reader.read_until(b'\n', &mut buffer)?;
+    // let v = serde_json::from_reader::<_, String>(&mut reader)?;
+    println!("buf : {:?}", buffer);
+
+    // match cli.command {
+    //     Command::Get { key } => {
+    //         serde_json::to_writer(&mut writer, &cmd)?;
+    //         writer.flush()?;
+    //     }
+    //     Command::Set { key, value } => {
+    //         serde_json::to_writer(&mut writer, &cmd)?;
+    //         writer.flush()?;
+    //     }
+    //     Command::Rm { key } => {
+    //         serde_json::to_writer(&mut writer, &cmd)?;
+    //         writer.flush()?;
+    //     }
+    //     _ => unreachable!(),
+    // };
     Ok(())
 }

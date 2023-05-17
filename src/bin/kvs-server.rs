@@ -5,10 +5,10 @@ use std::{
     path::Path,
 };
 
-use clap::{arg, builder::Command};
+use clap::{arg, command, Parser};
 use kvs::{address_parser, KvsEngine, MyError, Result};
 extern crate slog_term;
-use slog::{info, o, Drain, Logger};
+use slog::{debug, info, o, Drain, Logger};
 
 const ENGINE_PATH: &str = "engine";
 
@@ -45,20 +45,28 @@ fn check_engine(arg_engine: Option<String>) -> Result<String> {
 fn handle_client(kvs: &mut kvs::KvStore, logger: &Logger, stream: &mut TcpStream) -> Result<()> {
     info!(logger, "We've got a connection from : {:?}", stream);
 
+    let addr = stream.peer_addr()?;
     let mut buffer = vec![];
-    stream.read_to_end(&mut buffer)?;
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut writer = BufWriter::new(stream);
+    // serde_json::to_writer(writer, &buffer)?;
+    reader.read_to_end(&mut buffer)?;
+    info!(logger, "{:?}", buffer);
+
+    // stream.write(&buffer[..a])?;
 
     let cmd = serde_json::from_slice::<kvs::Command>(&buffer)?;
 
-    let mut writer = BufWriter::new(stream);
-
-    info!(logger, "Read {:?}", cmd);
     match cmd {
         kvs::Command::Get { key } => {
             if let Some(v) = kvs.get(key)? {
-                writer.write_all(v.as_bytes())?;
+                let resp = v;
+                serde_json::to_writer(&mut writer, &resp)?;
+                debug!(logger, "Response sent to {} : {:?}", addr, resp);
             } else {
-                writer.write_all(b"Key not found")?;
+                let resp = b"Key not found";
+                serde_json::to_writer(&mut writer, &resp)?;
+                debug!(logger, "Response sent to {} : {:?}", addr, resp);
             }
         }
         kvs::Command::Set { key, value } => {
@@ -66,7 +74,9 @@ fn handle_client(kvs: &mut kvs::KvStore, logger: &Logger, stream: &mut TcpStream
         }
         kvs::Command::Rm { key } => {
             if kvs.remove(key).is_err() {
-                writer.write_all(b"Key not found")?;
+                let resp = b"Key not found";
+                serde_json::to_writer(&mut writer, &resp)?;
+                debug!(logger, "Response sent to {} : {:?}", addr, resp);
             }
         }
     }
@@ -75,23 +85,24 @@ fn handle_client(kvs: &mut kvs::KvStore, logger: &Logger, stream: &mut TcpStream
     Ok(())
 }
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[arg(short, long, value_name = "addr", default_value = "127.0.0.1:4000")]
+    addr: String,
+
+    #[arg(short, long, value_name = "engine")]
+    engine: Option<String>,
+}
+
 fn main() -> Result<()> {
     let plain = slog_term::PlainSyncDecorator::new(std::io::stderr());
     let logger = Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!());
-    let m = Command::new("kvs")
-        .author(env!("CARGO_PKG_AUTHORS"))
-        .version(env!("CARGO_PKG_VERSION"))
-        .about(env!("CARGO_PKG_DESCRIPTION"))
-        .args([
-            arg!(--addr <addr> "IP:Port")
-                .required(false)
-                .default_value("127.0.0.1:4000"),
-            arg!(--engine <engine> "IP:Port").required(false),
-        ])
-        .get_matches();
 
-    let (addr, ip) = address_parser(m.get_one::<String>("addr").expect("Default value present"))?;
-    let engine = check_engine(m.get_one::<String>("engine").cloned())?;
+    let cli = Cli::parse();
+
+    let (addr, ip) = address_parser(&cli.addr)?;
+    let engine = check_engine(cli.engine)?;
 
     let logs = Path::new(".");
 
